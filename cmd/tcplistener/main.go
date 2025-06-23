@@ -1,12 +1,11 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
-	"strings"
+
+	"github.com/JosueAD95/httpfromtcp/internal/request"
 )
 
 func main() {
@@ -23,44 +22,22 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		fmt.Println("Accepted connection from ", conn.RemoteAddr())
+		fmt.Println("Accepted connection from: ", conn.RemoteAddr())
 
-		for line := range getLinesChannel(conn) {
-			fmt.Println(line)
+		req, err := request.RequestFromReader(conn)
+		if err != nil {
+			fmt.Println("Error parsing the request: ", err.Error())
 		}
+
+		reqLine := fmt.Sprintf(`
+Request line:
+- Method: %s
+- Target: %s
+- Version: %s`,
+			req.RequestLine.Method, req.RequestLine.RequestTarget, req.RequestLine.HttpVersion)
+		fmt.Println(reqLine)
+
+		conn.Close()
 		fmt.Println("Connection to ", conn.RemoteAddr(), "closed")
 	}
-}
-
-func getLinesChannel(file io.ReadCloser) <-chan string {
-	lineChan := make(chan string)
-
-	go func() {
-		defer file.Close()
-
-		buffer := make([]byte, 8, 8)
-		var line string
-		parts := make([]string, 2)
-		for {
-			n, err := file.Read(buffer)
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					lineChan <- line
-					break
-				}
-				panic(fmt.Sprintf("Error reading file: %s", err.Error()))
-			}
-
-			parts = strings.Split(string(buffer[:n]), "\n")
-			line += parts[0]
-			if len(parts) >= 2 && parts[1] != "" {
-				lineChan <- line
-				line = parts[1]
-			}
-		}
-		file.Close()
-		close(lineChan)
-	}()
-
-	return lineChan
 }

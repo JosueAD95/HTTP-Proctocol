@@ -100,13 +100,14 @@ func parseRequestLine(reqLine []byte) (*RequestLine, int, error) {
 		return nil, 0, fmt.Errorf("method is not supported: %s", lineParts[0])
 	}
 
-	if lineParts[2] != "HTTP/1.1" {
+	version := strings.TrimPrefix(lineParts[2], "HTTP/")
+	if version != "1.1" {
 		return nil, 0, fmt.Errorf("unsupported HTTP version: %s", lineParts[2])
 	}
 	return &RequestLine{
 		Method:        lineParts[0],
 		RequestTarget: lineParts[1],
-		HttpVersion:   lineParts[2],
+		HttpVersion:   version,
 	}, 0, nil
 }
 
