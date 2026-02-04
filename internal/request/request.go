@@ -5,10 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+
+	headers "github.com/JosueAD95/httpfromtcp/internal/headers"
 )
 
 var SUPPORTEDMETHODS = [4]string{"GET", "PUT", "POST", "DELETE"}
+
+var contentLength int
 
 const BUFFERSIZE = 8
 
@@ -18,11 +23,15 @@ type requestState int
 
 const (
 	requestInitialized requestState = iota
-	requestDone
+	requestStateParsingHeaders
+	requestStateParsingBody
+	requestStateDone
 )
 
 type Request struct {
 	RequestLine RequestLine
+	Headers     headers.Headers
+	Body        []byte
 	state       requestState
 }
 
@@ -33,8 +42,23 @@ type RequestLine struct {
 }
 
 func (r *Request) parse(data []byte) (int, error) {
+	totalBytesParsed := 0
+	for r.state != requestStateDone {
+		n, err := r.parseSingle(data[totalBytesParsed:])
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			break
+		}
+		totalBytesParsed += n
+	}
+	return totalBytesParsed, nil
+}
+
+func (r *Request) parseSingle(data []byte) (int, error) {
 	idx := bytes.Index(data, []byte(CRLF))
-	if idx == -1 { //just need more data
+	if idx == -1 && r.state != requestStateParsingBody { //just need more data and is no Parsing the body
 		return 0, nil
 	}
 	switch r.state {
@@ -44,10 +68,36 @@ func (r *Request) parse(data []byte) (int, error) {
 			return 0, err
 		}
 		r.RequestLine = *requestLine
-		r.state = requestDone
+		r.state = requestStateParsingHeaders
 		return idx + 2, nil
-	case requestDone:
-		return 0, errors.New("error: trying to read data in a done state")
+	case requestStateParsingHeaders:
+		n, done, err := r.Headers.Parse(data)
+		if err != nil { //something went wrong reading the headers
+			return 0, err
+		}
+		if done {
+			if contentLengthStr, ok := r.Headers.Get("Content-Length"); ok {
+				contentLength, err = strconv.Atoi(contentLengthStr)
+				if err != nil {
+					return 0, fmt.Errorf("header Content-Length is not a valid number: %s", contentLengthStr)
+				}
+				r.state = requestStateParsingBody
+			} else {
+				r.state = requestStateDone
+			}
+		}
+		return n, nil
+	case requestStateParsingBody:
+		r.Body = append(r.Body, data...)
+		if len(r.Body) > contentLength {
+			return 0, fmt.Errorf("body length is greader than content-length header, %d > %d", len(r.Body), contentLength)
+		}
+		if len(r.Body) == contentLength {
+			r.state = requestStateDone
+		}
+		return len(data), nil
+	case requestStateDone:
+		return 0, errors.New("reading data in a done state")
 	default:
 		return 0, errors.New("unknown state")
 	}
@@ -55,15 +105,16 @@ func (r *Request) parse(data []byte) (int, error) {
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
 	req := Request{
-		state: requestInitialized,
+		state:   requestInitialized,
+		Headers: headers.NewHeaders(),
+		Body:    make([]byte, 0),
 	}
-	var readToIndex int
-	var bytesRead int
-	var bytesParsed int
+	var readToIndex, bytesRead, bytesParsed int
 	var err error
+
 	buffer := make([]byte, BUFFERSIZE, BUFFERSIZE)
 
-	for req.state != requestDone {
+	for req.state != requestStateDone {
 		if readToIndex >= len(buffer) {
 			newBuffer := make([]byte, len(buffer)*2)
 			copy(newBuffer, buffer)
@@ -73,7 +124,9 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		bytesRead, err = reader.Read(buffer[readToIndex:])
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				req.state = requestDone
+				if req.state != requestStateDone {
+					return nil, fmt.Errorf("incomplete request, in state: %d, read n bytes on EOF: %d", req.state, bytesRead)
+				}
 				break
 			}
 			return nil, err
@@ -85,9 +138,10 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			return nil, err
 		}
 		copy(buffer, buffer[bytesParsed:])
-		readToIndex += bytesParsed
+		readToIndex -= bytesParsed
 	}
-	return &req, err
+
+	return &req, nil
 }
 
 func parseRequestLine(reqLine []byte) (*RequestLine, int, error) {
@@ -104,6 +158,7 @@ func parseRequestLine(reqLine []byte) (*RequestLine, int, error) {
 	if version != "1.1" {
 		return nil, 0, fmt.Errorf("unsupported HTTP version: %s", lineParts[2])
 	}
+
 	return &RequestLine{
 		Method:        lineParts[0],
 		RequestTarget: lineParts[1],

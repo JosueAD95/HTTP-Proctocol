@@ -29,13 +29,16 @@ func main() {
 			fmt.Println("Error parsing the request: ", err.Error())
 		}
 
-		reqLine := fmt.Sprintf(`
-Request line:
-- Method: %s
-- Target: %s
-- Version: %s`,
-			req.RequestLine.Method, req.RequestLine.RequestTarget, req.RequestLine.HttpVersion)
-		fmt.Println(reqLine)
+		fmt.Println("Request line:")
+		fmt.Printf("- Method: %s\n", req.RequestLine.Method)
+		fmt.Printf("- Target: %s\n", req.RequestLine.RequestTarget)
+		fmt.Printf("- Version: %s\n", req.RequestLine.HttpVersion)
+		fmt.Println("Headers:")
+		for key, value := range req.Headers {
+			fmt.Printf("- %s: %s\n", key, value)
+		}
+		fmt.Println("Body:")
+		fmt.Println(string(req.Body))
 
 		conn.Close()
 		fmt.Println("Connection to ", conn.RemoteAddr(), "closed")
