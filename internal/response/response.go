@@ -89,3 +89,24 @@ func (w *Writer) WriteBody(body []byte) error {
 	_, err := w.Conn.Write(body)
 	return err
 }
+
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	if w.state != bodyState {
+		return 0, fmt.Errorf("cannot write body state %d", w.state)
+	}
+	n := len(p)
+	chuckLen := fmt.Sprintf("%X%s", n, CRLF)
+	n += len(chuckLen) + 2
+	if _, err := w.Conn.Write([]byte(chuckLen)); err != nil {
+		return 0, err
+	}
+	if _, err := w.Conn.Write(append(p, []byte(CRLF)...)); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	defer func() { w.state = endedState }()
+	return w.WriteChunkedBody([]byte{})
+}

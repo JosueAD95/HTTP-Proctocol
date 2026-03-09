@@ -4,8 +4,10 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
+	"github.com/JosueAD95/httpfromtcp/internal/proxy"
 	"github.com/JosueAD95/httpfromtcp/internal/request"
 	"github.com/JosueAD95/httpfromtcp/internal/response"
 	"github.com/JosueAD95/httpfromtcp/internal/server"
@@ -43,19 +45,26 @@ const internalErrorHtml = `<html>
   </body>
 </html>`
 
+const httpBin = "/httpbin/"
+
 func handler(w *response.Writer, r *request.Request) {
 	var body []byte
-	switch r.RequestLine.RequestTarget {
-	case "/yourproblem":
+	path := r.RequestLine.RequestTarget
+	switch {
+	case path == "/yourproblem":
 		if err := w.WriteStatusLine(response.StatusCodeBadRequest); err != nil {
 			return
 		}
 		body = []byte(errorHtml)
-	case "/myproblem":
+	case path == "/myproblem":
 		if err := w.WriteStatusLine(response.StatusCodeInternalServerError); err != nil {
 			return
 		}
 		body = []byte(internalErrorHtml)
+	case strings.HasPrefix(path, httpBin):
+		resource := strings.TrimPrefix(path, httpBin)
+		proxy.WriteFromHttpBin(w, resource)
+		return
 	default:
 		if err := w.WriteStatusLine(response.StatusCodeSuccess); err != nil {
 			return
